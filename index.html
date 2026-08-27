@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Split It</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Chart.js for Fancy Analytics Chart -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+</head>
+<body>
+
+    <!-- AUTH MODAL -->
+    <div id="auth-overlay" class="auth-overlay">
+        <div class="auth-card">
+            <h2 id="auth-title"><i class="fa-solid fa-lock"></i> Welcome Back</h2>
+            <p id="auth-description">Please enter your details to open your trip portal.</p>
+            <form id="auth-form">
+                <div class="input-group">
+                    <label>Full Name</label>
+                    <input type="text" id="user-name" placeholder="John Doe" required>
+                </div>
+                <div class="input-group">
+                    <label>Email Address</label>
+                    <input type="email" id="user-email" placeholder="john@example.com" required>
+                </div>
+                <div class="input-group">
+                    <label>Phone Number (Optional)</label>
+                    <input type="tel" id="user-phone" placeholder="e.g. +91 98765 43210">
+                </div>
+                <div class="input-group">
+                    <label>UPI ID (Optional)</label>
+                    <input type="text" id="user-upi" placeholder="e.g. john@upi">
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" id="user-password" placeholder="••••••••" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Enter Application</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- MAIN APP CONTAINER -->
+    <div class="app-container">
+        
+        <!-- TOP HEADER -->
+        <header class="app-header">
+            <div class="brand">
+                <span class="brand-doodle" aria-hidden="true">✦</span>
+                <i class="fa-solid fa-wallet"></i>
+                <strong class="app-name">Split It</strong>
+                <span class="brand-doodle" aria-hidden="true">✦</span>
+            </div>
+            <div class="profile-menu-container">
+                <button type="button" class="user-badge" id="profile-toggle" aria-expanded="false" aria-controls="profile-menu" onclick="toggleProfileMenu()">
+                    <i class="fa-solid fa-circle-user"></i>
+                    <span id="current-user-name">Guest</span>
+                    <i class="fa-solid fa-chevron-down profile-chevron"></i>
+                </button>
+                <div class="profile-menu" id="profile-menu" hidden>
+                    <div class="profile-menu__heading"><i class="fa-solid fa-id-card"></i> My Profile</div>
+                    <div class="profile-detail"><span>Name</span><strong id="profile-name">Guest</strong></div>
+                    <div class="profile-detail"><span>Email ID</span><strong id="current-user-email">Email not added</strong></div>
+                    <div class="profile-detail"><span>Phone Number</span><strong id="current-user-phone">Phone not added</strong></div>
+                    <div class="profile-detail"><span>UPI ID</span><strong id="current-user-upi">UPI not added</strong></div>
+                    <div class="profile-actions">
+                        <button type="button" class="btn btn-secondary" onclick="openProfileEditor()"><i class="fa-solid fa-pen"></i> Edit Profile</button>
+                        <button type="button" class="btn btn-danger" onclick="logoutUser()"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- NAVIGATION TABS -->
+        <div class="slide-nav-bar">
+            <button class="nav-dot active" onclick="goToSlide(1)"><i class="fa-solid fa-house"></i> 1. Start</button>
+            <button class="nav-dot" onclick="goToSlide(2)"><i class="fa-solid fa-users"></i> 2. Members</button>
+            <button class="nav-dot" onclick="goToSlide(3)"><i class="fa-solid fa-receipt"></i> 3. Expenses</button>
+            <button class="nav-dot" onclick="goToSlide(4)"><i class="fa-solid fa-chart-pie"></i> 4. Balances</button>
+            <button class="nav-dot" onclick="goToSlide(5)"><i class="fa-solid fa-file-invoice-dollar"></i> 5. Receipts</button>
+            <button class="nav-dot" onclick="goToSlide(6)"><i class="fa-solid fa-clock-rotate-left"></i> 6. History</button>
+            <button class="nav-dot" onclick="goToSlide(7)"><i class="fa-solid fa-comments"></i> 7. Chat</button>
+        </div>
+
+        <main class="slides-viewport">
+            
+            <!-- SLIDE 1: WELCOME & TRIP SETUP -->
+            <section class="slide active" id="slide-1">
+                <div class="hero-card">
+                    <div class="travel-art" aria-hidden="true">
+                        <span class="travel-art__emoji travel-art__emoji--sun">☀️</span>
+                        <span class="travel-art__emoji travel-art__emoji--plane">✈️</span>
+                        <span class="travel-art__emoji travel-art__emoji--suitcase">🧳</span>
+                        <span class="travel-art__emoji travel-art__emoji--palm">🌴</span>
+                        <span class="travel-art__emoji travel-art__emoji--map">🗺️</span>
+                    </div>
+                    <div class="hero-content">
+                        <p class="hero-kicker">🧭 Plan together · travel lighter</p>
+                        <h1>Split Bills & Track Trips</h1>
+                        <p>Manage group expenses, record multi-payer bills, and settle automatically via UPI.</p>
+                    </div>
+                </div>
+
+                <div class="form-card">
+                    <h3><i class="fa-solid fa-compass"></i> Event & Trip Setup</h3>
+                    
+                    <div class="form-row">
+                        <div class="input-group">
+                            <label for="trip-category-select">Choose Event Type / Category</label>
+                            <select id="trip-category-select" onchange="toggleOtherCategoryInput()">
+                                <option value="Vacation/Trip">🌴 Vacation / Trip</option>
+                                <option value="Night Out">🌃 Night Out</option>
+                                <option value="Party">🎉 Party</option>
+                                <option value="Dining Out">🍽️ Dining Out</option>
+                                <option value="House Party">🏠 House Party</option>
+                                <option value="Other">✨ Other (Custom)</option>
+                            </select>
+                        </div>
+                        <div class="input-group" id="other-category-container" style="display: none;">
+                            <label for="trip-custom-name">Or Write Your Own Event Type</label>
+                            <input type="text" id="trip-custom-name" placeholder="e.g. Goa Roadtrip">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="input-group">
+                            <label>Start Date</label>
+                            <input type="date" id="trip-start-date" required>
+                        </div>
+                        <div class="input-group">
+                            <label>End Date</label>
+                            <input type="date" id="trip-end-date" required>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="saveTripDetails()">Save & Proceed <i class="fa-solid fa-arrow-right"></i></button>
+                </div>
+
+                <div class="form-card share-trip-card">
+                    <h3><i class="fa-solid fa-qrcode"></i> Invite Members to This Trip</h3>
+                    <p class="history-intro">Members can scan this QR code, enter their details, and add expenses to this trip.</p>
+                    <div id="trip-qr-code" class="trip-qr-code"></div>
+                    <p id="trip-qr-status" class="currency-note" aria-live="polite"></p>
+                    <button class="btn btn-primary" onclick="generateTripQr()"><i class="fa-solid fa-rotate"></i> Refresh QR</button>
+                </div>
+            </section>
+
+            <!-- SLIDE 2: MEMBERS & UPI -->
+            <section class="slide" id="slide-2">
+                <h2><i class="fa-solid fa-user-plus"></i> Members & UPI Directory</h2>
+                <div class="form-card">
+                    <div class="form-row">
+                        <div class="input-group">
+                            <label>Member Name</label>
+                            <input type="text" id="member-name-input" placeholder="e.g. Rahul Sharma">
+                        </div>
+                        <div class="input-group">
+                            <label>UPI ID</label>
+                            <input type="text" id="member-upi-input" placeholder="e.g. rahul@paytm (optional)">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="input-group">
+                            <label>Email ID (Optional)</label>
+                            <input type="email" id="member-email-input" placeholder="e.g. rahul@example.com">
+                        </div>
+                        <div class="input-group">
+                            <label>Preferred Payment Method</label>
+                            <select id="member-payment-method">
+                                <option value="UPI">UPI</option>
+                                <option value="Cash">Cash</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p class="currency-note">Choose Cash when this member receives payment in cash instead of UPI.</p>
+                    <button class="btn btn-secondary" onclick="addMember()"><i class="fa-solid fa-plus"></i> Add Member</button>
+                </div>
+
+                <div class="list-card">
+                    <h3>Current Members</h3>
+                    <ul id="members-list" class="styled-list"></ul>
+                </div>
+
+                <div class="slide-footer">
+                    <button class="btn btn-primary" onclick="goToSlide(3)">Next: Add Expenses <i class="fa-solid fa-arrow-right"></i></button>
+                </div>
+            </section>
+
+            <!-- SLIDE 3: MULTI-PAYER EXPENSE & CAMERA CAPTURE -->
+            <section class="slide" id="slide-3">
+                <h2><i class="fa-solid fa-cart-plus"></i> Log Expense</h2>
+                <div class="form-card">
+                    
+                    <div class="input-group">
+                        <label>Expense Description / Detailed Notes (Optional)</label>
+                        <textarea id="expense-desc-text" rows="3" placeholder="Add notes if needed... (e.g. Hotel stay + dinner + cab charges)"></textarea>
+                    </div>
+
+                    <div class="form-row expense-currency-row">
+                        <div class="input-group">
+                            <label for="expense-currency">Expense Currency</label>
+                            <select id="expense-currency" onchange="toggleOtherCurrencyInput()">
+                                <option value="INR">₹ Indian Rupee (INR)</option>
+                                <option value="USD">$ US Dollar (USD)</option>
+                                <option value="EUR">€ Euro (EUR)</option>
+                                <option value="OTHER">Other</option>
+                            </select>
+                        </div>
+                        <div class="input-group" id="other-currency-container" style="display: none;">
+                            <label for="other-currency">Choose or Type Currency</label>
+                            <input type="text" id="other-currency" list="currency-options" placeholder="e.g. AED" maxlength="6" oninput="updatePayerCurrencyPlaceholder()">
+                            <datalist id="currency-options">
+                                <option value="AED" label="UAE Dirham (د.إ)    AED"></option>
+                                <option value="AFN" label="Afghan Afghani (؋)    AFN"></option>
+                                <option value="ALL" label="Albanian Lek (Lek)    ALL"></option>
+                                <option value="AMD" label="Armenian Dram (֏)    AMD"></option>
+                                <option value="ANG" label="Netherlands Antillean Guilder (ƒ)    ANG"></option>
+                                <option value="AOA" label="Angolan Kwanza (Kz)    AOA"></option>
+                                <option value="ARS" label="Argentine Peso ($)    ARS"></option>
+                                <option value="AUD" label="Australian Dollar ($)    AUD"></option>
+                                <option value="AWG" label="Aruban Florin (ƒ)    AWG"></option>
+                                <option value="AZN" label="Azerbaijani Manat (₼)    AZN"></option>
+                                <option value="BAM" label="Bosnia-Herzegovina Convertible Mark (KM)    BAM"></option>
+                                <option value="BBD" label="Barbadian Dollar ($)    BBD"></option>
+                                <option value="BDT" label="Bangladeshi Taka (৳)    BDT"></option>
+                                <option value="BGN" label="Bulgarian Lev (лв)    BGN"></option>
+                                <option value="BHD" label="Bahraini Dinar (.د.ب)    BHD"></option>
+                                <option value="BIF" label="Burundian Franc (Fr)    BIF"></option>
+                                <option value="BMD" label="Bermudian Dollar ($)    BMD"></option>
+                                <option value="BND" label="Brunei Dollar ($)    BND"></option>
+                                <option value="BOB" label="Bolivian Boliviano (Bs.)    BOB"></option>
+                                <option value="BRL" label="Brazilian Real (R$)    BRL"></option>
+                                <option value="BSD" label="Bahamian Dollar ($)    BSD"></option>
+                                <option value="BTN" label="Bhutanese Ngultrum (Nu.)    BTN"></option>
+                                <option value="BWP" label="Botswana Pula (P)    BWP"></option>
+                                <option value="BYN" label="Belarusian Ruble (Br)    BYN"></option>
+                                <option value="BZD" label="Belize Dollar ($)    BZD"></option>
+                                <option value="CAD" label="Canadian Dollar ($)    CAD"></option>
+                                <option value="CDF" label="Congolese Franc (FC)    CDF"></option>
+                                <option value="CHF" label="Swiss Franc (CHF)    CHF"></option>
+                                <option value="CLP" label="Chilean Peso ($)    CLP"></option>
+                                <option value="CNY" label="Chinese Yuan (¥)    CNY"></option>
+                                <option value="COP" label="Colombian Peso ($)    COP"></option>
+                                <option value="CRC" label="Costa Rican Colon (₡)    CRC"></option>
+                                <option value="CUP" label="Cuban Peso ($)    CUP"></option>
+                                <option value="CVE" label="Cape Verdean Escudo ($)    CVE"></option>
+                                <option value="CZK" label="Czech Koruna (Kč)    CZK"></option>
+                                <option value="DJF" label="Djiboutian Franc (Fdj)    DJF"></option>
+                                <option value="DKK" label="Danish Krone (kr)    DKK"></option>
+                                <option value="DOP" label="Dominican Peso (RD$)    DOP"></option>
+                                <option value="DZD" label="Algerian Dinar (دج)    DZD"></option>
+                                <option value="EGP" label="Egyptian Pound (ج.م)    EGP"></option>
+                                <option value="ERN" label="Eritrean Nakfa (Nfk)    ERN"></option>
+                                <option value="ETB" label="Ethiopian Birr (Br)    ETB"></option>
+                                <option value="EUR" label="Euro (€)    EUR"></option>
+                                <option value="FJD" label="Fijian Dollar ($)    FJD"></option>
+                                <option value="FKP" label="Falkland Islands Pound (£)    FKP"></option>
+                                <option value="GBP" label="British Pound (£)    GBP"></option>
+                                <option value="GEL" label="Georgian Lari (₾)    GEL"></option>
+                                <option value="GHS" label="Ghanaian Cedi (₵)    GHS"></option>
+                                <option value="GIP" label="Gibraltar Pound (£)    GIP"></option>
+                                <option value="GMD" label="Gambian Dalasi (D)    GMD"></option>
+                                <option value="GNF" label="Guinean Franc (Fr)    GNF"></option>
+                                <option value="GTQ" label="Guatemalan Quetzal (Q)    GTQ"></option>
+                                <option value="GYD" label="Guyanese Dollar ($)    GYD"></option>
+                                <option value="HKD" label="Hong Kong Dollar ($)    HKD"></option>
+                                <option value="HNL" label="Honduran Lempira (L)    HNL"></option>
+                                <option value="HTG" label="Haitian Gourde (G)    HTG"></option>
+                                <option value="HUF" label="Hungarian Forint (Ft)    HUF"></option>
+                                <option value="IDR" label="Indonesian Rupiah (Rp)    IDR"></option>
+                                <option value="ILS" label="Israeli New Shekel (₪)    ILS"></option>
+                                <option value="INR" label="Indian Rupee (₹)    INR"></option>
+                                <option value="IQD" label="Iraqi Dinar (ع.د)    IQD"></option>
+                                <option value="IRR" label="Iranian Rial (﷼)    IRR"></option>
+                                <option value="ISK" label="Icelandic Krona (kr)    ISK"></option>
+                                <option value="JMD" label="Jamaican Dollar ($)    JMD"></option>
+                                <option value="JOD" label="Jordanian Dinar (د.ا)    JOD"></option>
+                                <option value="JPY" label="Japanese Yen (¥)    JPY"></option>
+                                <option value="KES" label="Kenyan Shilling (KSh)    KES"></option>
+                                <option value="KGS" label="Kyrgyzstani Som (с)    KGS"></option>
+                                <option value="KHR" label="Cambodian Riel (៛)    KHR"></option>
+                                <option value="KMF" label="Comorian Franc (Fr)    KMF"></option>
+                                <option value="KPW" label="North Korean Won (₩)    KPW"></option>
+                                <option value="KRW" label="South Korean Won (₩)    KRW"></option>
+                                <option value="KWD" label="Kuwaiti Dinar (د.ك)    KWD"></option>
+                                <option value="KYD" label="Cayman Islands Dollar ($)    KYD"></option>
+                                <option value="KZT" label="Kazakhstani Tenge (₸)    KZT"></option>
+                                <option value="LAK" label="Lao Kip (₭)    LAK"></option>
+                                <option value="LBP" label="Lebanese Pound (ل.ل)    LBP"></option>
+                                <option value="LKR" label="Sri Lankan Rupee (Rs)    LKR"></option>
+                                <option value="LRD" label="Liberian Dollar ($)    LRD"></option>
+                                <option value="LSL" label="Lesotho Loti (L)    LSL"></option>
+                                <option value="LYD" label="Libyan Dinar (ل.د)    LYD"></option>
+                                <option value="MAD" label="Moroccan Dirham (د.م.)    MAD"></option>
+                                <option value="MDL" label="Moldovan Leu (L)    MDL"></option>
+                                <option value="MGA" label="Malagasy Ariary (Ar)    MGA"></option>
+                                <option value="MKD" label="Macedonian Denar (ден)    MKD"></option>
+                                <option value="MMK" label="Myanmar Kyat (K)    MMK"></option>
+                                <option value="MNT" label="Mongolian Tugrik (₮)    MNT"></option>
+                                <option value="MOP" label="Macanese Pataca (MOP$)    MOP"></option>
+                                <option value="MRU" label="Mauritanian Ouguiya (UM)    MRU"></option>
+                                <option value="MUR" label="Mauritian Rupee (₨)    MUR"></option>
+                                <option value="MVR" label="Maldivian Rufiyaa (Rf)    MVR"></option>
+                                <option value="MWK" label="Malawian Kwacha (MK)    MWK"></option>
+                                <option value="MXN" label="Mexican Peso ($)    MXN"></option>
+                                <option value="MYR" label="Malaysian Ringgit (RM)    MYR"></option>
+                                <option value="MZN" label="Mozambican Metical (MT)    MZN"></option>
+                                <option value="NAD" label="Namibian Dollar ($)    NAD"></option>
+                                <option value="NGN" label="Nigerian Naira (₦)    NGN"></option>
+                                <option value="NIO" label="Nicaraguan Cordoba (C$)    NIO"></option>
+                                <option value="NOK" label="Norwegian Krone (kr)    NOK"></option>
+                                <option value="NPR" label="Nepalese Rupee (₨)    NPR"></option>
+                                <option value="NZD" label="New Zealand Dollar ($)    NZD"></option>
+                                <option value="OMR" label="Omani Rial (ر.ع.)    OMR"></option>
+                                <option value="PAB" label="Panamanian Balboa (B/.)    PAB"></option>
+                                <option value="PEN" label="Peruvian Sol (S/)    PEN"></option>
+                                <option value="PGK" label="Papua New Guinean Kina (K)    PGK"></option>
+                                <option value="PHP" label="Philippine Peso (₱)    PHP"></option>
+                                <option value="PKR" label="Pakistani Rupee (₨)    PKR"></option>
+                                <option value="PLN" label="Polish Zloty (zł)    PLN"></option>
+                                <option value="PYG" label="Paraguayan Guarani (₲)    PYG"></option>
+                                <option value="QAR" label="Qatari Riyal (ر.ق)    QAR"></option>
+                                <option value="RON" label="Romanian Leu (lei)    RON"></option>
+                                <option value="RSD" label="Serbian Dinar (дин.)    RSD"></option>
+                                <option value="RUB" label="Russian Ruble (₽)    RUB"></option>
+                                <option value="RWF" label="Rwandan Franc (Fr)    RWF"></option>
+                                <option value="SAR" label="Saudi Riyal (ر.س)    SAR"></option>
+                                <option value="SBD" label="Solomon Islands Dollar ($)    SBD"></option>
+                                <option value="SCR" label="Seychellois Rupee (₨)    SCR"></option>
+                                <option value="SDG" label="Sudanese Pound (ج.س.)    SDG"></option>
+                                <option value="SEK" label="Swedish Krona (kr)    SEK"></option>
+                                <option value="SGD" label="Singapore Dollar ($)    SGD"></option>
+                                <option value="SHP" label="Saint Helena Pound (£)    SHP"></option>
+                                <option value="SLE" label="Sierra Leonean Leone (Le)    SLE"></option>
+                                <option value="SOS" label="Somali Shilling (S)    SOS"></option>
+                                <option value="SRD" label="Surinamese Dollar ($)    SRD"></option>
+                                <option value="SSP" label="South Sudanese Pound (£)    SSP"></option>
+                                <option value="STN" label="Sao Tome and Principe Dobra (Db)    STN"></option>
+                                <option value="SYP" label="Syrian Pound (£)    SYP"></option>
+                                <option value="SZL" label="Eswatini Lilangeni (L)    SZL"></option>
+                                <option value="THB" label="Thai Baht (฿)    THB"></option>
+                                <option value="TJS" label="Tajikistani Somoni (ЅМ)    TJS"></option>
+                                <option value="TMT" label="Turkmenistani Manat (m)    TMT"></option>
+                                <option value="TND" label="Tunisian Dinar (د.ت)    TND"></option>
+                                <option value="TOP" label="Tongan Paanga (T$)    TOP"></option>
+                                <option value="TRY" label="Turkish Lira (₺)    TRY"></option>
+                                <option value="TTD" label="Trinidad and Tobago Dollar ($)    TTD"></option>
+                                <option value="TWD" label="New Taiwan Dollar (NT$)    TWD"></option>
+                                <option value="TZS" label="Tanzanian Shilling (TSh)    TZS"></option>
+                                <option value="UAH" label="Ukrainian Hryvnia (₴)    UAH"></option>
+                                <option value="UGX" label="Ugandan Shilling (USh)    UGX"></option>
+                                <option value="UYU" label="Uruguayan Peso ($U)    UYU"></option>
+                                <option value="UZS" label="Uzbekistani Som (лв)    UZS"></option>
+                                <option value="VES" label="Venezuelan Bolivar (Bs.)    VES"></option>
+                                <option value="VND" label="Vietnamese Dong (₫)    VND"></option>
+                                <option value="VUV" label="Vanuatu Vatu (VT)    VUV"></option>
+                                <option value="WST" label="Samoan Tala (T)    WST"></option>
+                                <option value="XAF" label="Central African CFA Franc (FCFA)    XAF"></option>
+                                <option value="XCD" label="East Caribbean Dollar ($)    XCD"></option>
+                                <option value="XOF" label="West African CFA Franc (CFA)    XOF"></option>
+                                <option value="XPF" label="CFP Franc (₣)    XPF"></option>
+                                <option value="YER" label="Yemeni Rial (﷼)    YER"></option>
+                                <option value="ZAR" label="South African Rand (R)    ZAR"></option>
+                                <option value="ZMW" label="Zambian Kwacha (ZK)    ZMW"></option>
+                            </datalist>
+                        </div>
+                    </div>
+                    <p class="currency-note">Use the same currency for all expenses to keep balances accurate.</p>
+
+                    <h4 style="margin: 1rem 0 0.5rem 0; color: var(--text-muted);"><i class="fa-solid fa-hand-holding-dollar expense-doodle-icon"></i> Who Paid How Much?</h4>
+                    <div id="multi-payer-container" class="multi-payer-box"></div>
+
+                    <h4 id="shared-expense-heading" style="margin: 1rem 0 0.5rem 0; color: var(--text-muted);"><i class="fa-solid fa-users expense-doodle-icon"></i> Who Shared This Expense? <span id="shared-member-count">(0 members)</span></h4>
+                    <div id="multi-splitter-container" class="multi-splitter-box"></div>
+
+                    <div class="form-row" style="margin-top: 1rem;">
+                        <div class="input-group">
+                            <label>Attach Bill Image (Upload File) (Optional)</label>
+                            <input type="file" id="expense-image-file" accept="image/*">
+                            <span id="upload-status" class="receipt-input-status" aria-live="polite"></span>
+                        </div>
+                        <div class="input-group">
+                            <label>Capture via Camera (Optional)</label>
+                            <input type="file" id="expense-image-camera" accept="image/*" capture="environment">
+                            <span id="camera-status" class="receipt-input-status" aria-live="polite"></span>
+                            <button type="button" class="btn btn-secondary camera-button" onclick="openCamera()"><i class="fa-solid fa-camera"></i> Open Camera</button>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-secondary" onclick="addExpense()"><i class="fa-solid fa-file-circle-plus"></i> Save Expense</button>
+                </div>
+                
+                <div class="slide-footer">
+                    <button class="btn btn-primary" onclick="goToSlide(4)">Next: View Analytics <i class="fa-solid fa-arrow-right"></i></button>
+                </div>
+            </section>
+
+            <!-- SLIDE 4: FANCY BALANCE SHEET & PIE CHART -->
+            <section class="slide" id="slide-4">
+                <h2><i class="fa-solid fa-chart-pie"></i> Analytics & Balance Sheet</h2>
+                
+                <div class="analytics-chart-grid">
+                    <div class="list-card">
+                        <h3><i class="fa-solid fa-chart-pie"></i> Shared Expense Contribution</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="expenseChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="list-card">
+                        <h3><i class="fa-solid fa-circle-half-stroke"></i> Final Balance Distribution</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="balanceChart"></canvas>
+                        </div>
+                        <div id="settlement-breakdown" class="settlement-breakdown"></div>
+                    </div>
+                </div>
+
+                <div class="grid-2-col">
+                    <div class="list-card">
+                        <h3><i class="fa-solid fa-scale-balanced"></i> Net Balances</h3>
+                        <ul id="net-balances-list" class="styled-list"></ul>
+                    </div>
+                </div>
+
+                <div class="list-card" style="margin-top: 1rem;">
+                    <h3><i class="fa-solid fa-clock-rotate-left"></i> Expense History Log</h3>
+                    <div id="expense-history-list" class="history-container"></div>
+                </div>
+
+                <div class="slide-footer">
+                    <button class="btn btn-primary" onclick="goToSlide(5)">Next: Receipts & UPI <i class="fa-solid fa-arrow-right"></i></button>
+                </div>
+            </section>
+
+            <!-- SLIDE 5: INDIVIDUAL RECEIPTS & AUTO-SETTLEMENT -->
+            <section class="slide" id="slide-5">
+                <h2><i class="fa-solid fa-receipt"></i> Receipts & UPI Settlements</h2>
+                <div id="receipts-container" class="receipts-grid"></div>
+            </section>
+
+            <!-- SLIDE 6: RECENT HISTORY -->
+            <section class="slide" id="slide-6">
+                <h2><i class="fa-solid fa-clock-rotate-left"></i> Recent History</h2>
+                <p class="history-intro">Your saved trips stay here when you close and reopen the application.</p>
+                <div id="recent-history-list" class="recent-history-list"></div>
+            </section>
+
+            <!-- SLIDE 7: GROUP CHAT -->
+            <section class="slide" id="slide-7">
+                <h2><i class="fa-solid fa-comments"></i> Group Chat</h2>
+                <p class="history-intro">Keep trip plans, reminders, and expense notes together.</p>
+                <div class="chat-card">
+                    <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
+                    <form id="chat-form" class="chat-form">
+                        <div class="chat-form-row">
+                            <div class="input-group">
+                                <label for="chat-sender">Send as</label>
+                                <select id="chat-sender"></select>
+                            </div>
+                            <div class="input-group chat-message-input">
+                                <label for="chat-message">Message</label>
+                                <input type="text" id="chat-message" placeholder="Write a message to the group..." maxlength="500" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary chat-send-button"><i class="fa-solid fa-paper-plane"></i> Send</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- IMAGE PREVIEW MODAL -->
+    <div id="camera-modal" class="image-modal camera-modal" role="dialog" aria-modal="true" aria-label="Capture receipt image">
+        <div class="camera-panel" onclick="event.stopPropagation()">
+            <video id="camera-preview" autoplay playsinline></video>
+            <div class="camera-actions">
+                <button type="button" class="btn btn-primary" onclick="captureCameraImage()"><i class="fa-solid fa-camera"></i> Capture</button>
+                <button type="button" class="btn btn-secondary" onclick="closeCamera()">Cancel</button>
+            </div>
+        </div>
+    </div>
+    <div id="image-modal" class="image-modal" onclick="closeImageModal()">
+        <img id="modal-image" src="" alt="Bill Image">
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
