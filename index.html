@@ -8,6 +8,7 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <!-- Chart.js for Fancy Analytics Chart -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.0.0/dist/jsQR.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
 </head>
@@ -38,9 +39,21 @@
                 <div class="input-group">
                     <label>Password</label>
                     <input type="password" id="user-password" placeholder="••••••••" required>
-                </div>
-                <button type="submit" class="btn btn-primary btn-block">Enter Application</button>
+                 </div>
+      <button type="submit" id="auth-submit-btn" class="btn btn-primary btn-block">Enter Application</button>
             </form>
+        </div>
+    </div>
+
+    <div id="qr-scanner-modal" class="qr-scanner-modal" hidden>
+        <div class="qr-scanner-dialog">
+            <div class="qr-scanner-header">
+                <h3><i class="fa-solid fa-qrcode"></i> Scan Trip QR</h3>
+                <button type="button" class="btn btn-secondary" onclick="closeQrScanner()"><i class="fa-solid fa-xmark"></i> Close</button>
+            </div>
+            <video id="qr-scanner-video" autoplay playsinline muted></video>
+            <canvas id="qr-scanner-canvas" hidden></canvas>
+            <p id="qr-scanner-status" class="currency-note" aria-live="polite">Point your camera at a shared trip QR code.</p>
         </div>
     </div>
 
@@ -67,8 +80,36 @@
                     <div class="profile-detail"><span>Email ID</span><strong id="current-user-email">Email not added</strong></div>
                     <div class="profile-detail"><span>Phone Number</span><strong id="current-user-phone">Phone not added</strong></div>
                     <div class="profile-detail"><span>UPI ID</span><strong id="current-user-upi">UPI not added</strong></div>
+                    <div class="profile-detail"><span>Password</span><strong id="current-user-password">Password not set</strong></div>
+                    <div id="profile-editor" class="profile-editor" hidden>
+                        <div class="input-group">
+                            <label>Name</label>
+                            <input type="text" id="profile-name-input" placeholder="Full name">
+                        </div>
+                        <div class="input-group">
+                            <label>Email</label>
+                            <input type="email" id="profile-email-input" placeholder="Email address">
+                        </div>
+                        <div class="input-group">
+                            <label>Phone Number</label>
+                            <input type="tel" id="profile-phone-input" placeholder="Phone number">
+                        </div>
+                        <div class="input-group">
+                            <label>UPI ID</label>
+                            <input type="text" id="profile-upi-input" placeholder="UPI ID">
+                        </div>
+                        <div class="input-group">
+                            <label>Password</label>
+                            <input type="password" id="profile-password-input" placeholder="Password">
+                        </div>
+                        <div class="profile-actions">
+                            <button type="button" class="btn btn-primary" onclick="saveProfileEditor()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                            <button type="button" class="btn btn-secondary" onclick="cancelProfileEditor()"><i class="fa-solid fa-xmark"></i> Cancel</button>
+                        </div>
+                    </div>
                     <div class="profile-actions">
                         <button type="button" class="btn btn-secondary" onclick="openProfileEditor()"><i class="fa-solid fa-pen"></i> Edit Profile</button>
+                        <button type="button" class="btn btn-secondary" onclick="openQrScanner()"><i class="fa-solid fa-qrcode"></i> Scan QR to Join</button>
                         <button type="button" class="btn btn-danger" onclick="logoutUser()"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
                     </div>
                 </div>
@@ -181,6 +222,9 @@
 
                 <div class="list-card">
                     <h3>Current Members</h3>
+                    <div style="display:flex; justify-content:flex-end; margin-bottom:0.75rem;">
+                        <button class="btn btn-danger" onclick="clearAllMembers()"><i class="fa-solid fa-trash"></i> Clear Previous Members</button>
+                    </div>
                     <ul id="members-list" class="styled-list"></ul>
                 </div>
 
@@ -424,6 +468,30 @@
                         <h3><i class="fa-solid fa-scale-balanced"></i> Net Balances</h3>
                         <ul id="net-balances-list" class="styled-list"></ul>
                     </div>
+
+                    <div class="list-card">
+                        <h3><i class="fa-solid fa-circle-plus"></i> Extra Amount Adjustment</h3>
+                        <div class="form-row">
+                            <div class="input-group">
+                                <label>From member</label>
+                                <select id="adjustment-from-member"></select>
+                            </div>
+                            <div class="input-group">
+                                <label>To member</label>
+                                <select id="adjustment-to-member"></select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="input-group">
+                                <label>Amount</label>
+                                <input type="number" id="adjustment-amount" step="0.01" min="0.01" placeholder="0.00">
+                            </div>
+                            <div class="input-group" style="display:flex; align-items:flex-end;">
+                                <button type="button" class="btn btn-primary" onclick="addManualAdjustment()"><i class="fa-solid fa-plus"></i> Add Extra</button>
+                            </div>
+                        </div>
+                        <div id="extra-adjustments-list" class="styled-list"></div>
+                    </div>
                 </div>
 
                 <div class="list-card" style="margin-top: 1rem;">
@@ -454,6 +522,7 @@
                 <h2><i class="fa-solid fa-comments"></i> Group Chat</h2>
                 <p class="history-intro">Keep trip plans, reminders, and expense notes together.</p>
                 <div class="chat-card">
+                    <p class="history-intro" style="margin-bottom:0.75rem;">Trip members can chat here after they join the current trip.</p>
                     <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
                     <form id="chat-form" class="chat-form">
                         <div class="chat-form-row">

@@ -5,6 +5,7 @@ const db = {
     members: JSON.parse(localStorage.getItem('app_members')) || [],
     expenses: JSON.parse(localStorage.getItem('app_expenses')) || [],
     settlements: JSON.parse(localStorage.getItem('app_settlements')) || {},
+    adjustments: JSON.parse(localStorage.getItem('app_adjustments')) || [],
     history: JSON.parse(localStorage.getItem('app_history')) || [],
     chatMessages: JSON.parse(localStorage.getItem('app_chat_messages')) || []
 };
@@ -14,6 +15,8 @@ let balanceChartInstance = null;
 let cameraStream = null;
 let editingHistoryKey = null;
 let pendingTripShare = null;
+let qrScannerStream = null;
+let qrScannerFrameId = null;
 
 const currencySymbols = { INR: '₹', USD: '$', EUR: '€' };
 
@@ -37,7 +40,14 @@ function saveDB() {
     localStorage.setItem('app_members', JSON.stringify(db.members));
     localStorage.setItem('app_expenses', JSON.stringify(db.expenses));
     localStorage.setItem('app_settlements', JSON.stringify(db.settlements));
+    localStorage.setItem('app_adjustments', JSON.stringify(db.adjustments));
     localStorage.setItem('app_chat_messages', JSON.stringify(db.chatMessages));
+    if (db.user && db.user.email) {
+        localStorage.setItem('app_credentials', JSON.stringify({
+            email: db.user.email.toLowerCase(),
+            password: db.user.password || ''
+        }));
+    }
     saveCurrentTripToHistory();
     localStorage.setItem('app_history', JSON.stringify(db.history));
 }
@@ -79,15 +89,11 @@ document.getElementById('auth-form').addEventListener('submit', function(e) {
     const phone = document.getElementById('user-phone').value.trim();
     const upi = document.getElementById('user-upi').value.trim();
 
-    const savedCredentials = JSON.parse(localStorage.getItem('app_credentials'));
-    if (!pendingTripShare && savedCredentials && (savedCredentials.email !== email.toLowerCase() || savedCredentials.password !== password)) {
-        return alert('Incorrect email or password.');
-    }
-    if (!pendingTripShare && !savedCredentials) {
+    if (!pendingTripShare) {
         localStorage.setItem('app_credentials', JSON.stringify({ email: email.toLowerCase(), password }));
     }
 
-    db.user = { name: name.trim(), email: email.trim(), phone, upi };
+    db.user = { name: name.trim(), email: email.trim(), phone, upi, password: password || '' };
 
     if (pendingTripShare) {
         db.trip = pendingTripShare.trip;
@@ -96,6 +102,7 @@ document.getElementById('auth-form').addEventListener('submit', function(e) {
         db.settlements = pendingTripShare.settlements || {};
         const alreadyJoined = db.members.some(member => member.name.toLowerCase() === name.toLowerCase());
         if (!alreadyJoined) db.members.push({ name, email, upi, paymentMethod: upi ? 'UPI' : 'Cash' });
+        if (!db.user) db.user = { name: name.trim(), email: email.trim(), phone, upi, password: password || '' };
         pendingTripShare = null;
         history.replaceState(null, '', window.location.pathname);
     }
@@ -115,27 +122,46 @@ function checkAuth() {
         document.getElementById('current-user-email').innerText = db.user.email || 'Email not added';
         document.getElementById('current-user-phone').innerText = db.user.phone || 'Phone not added';
         document.getElementById('current-user-upi').innerText = db.user.upi ? `UPI: ${db.user.upi}` : 'UPI not added';
+        document.getElementById('current-user-password').innerText = db.user.password ? '••••••••' : 'Password not set';
     } else {
         overlay.style.display = 'flex';
     }
 }
 
 function openProfileEditor() {
-    const name = prompt('Full name:', db.user?.name || '');
-    if (name === null) return;
-    const email = prompt('Email address:', db.user?.email || '');
-    if (email === null) return;
-    const phone = prompt('Phone number:', db.user?.phone || '');
-    if (phone === null) return;
-    const upi = prompt('UPI ID:', db.user?.upi || '');
-    if (upi === null) return;
-    if (!name.trim() || !email.trim()) return alert('Name and email are required.');
+    const editor = document.getElementById('profile-editor');
+    const profile = db.user || { name: '', email: '', phone: '', upi: '', password: '' };
 
-    db.user = { name: name.trim(), email: email.trim(), phone: phone.trim(), upi: upi.trim() };
-    saveDB();
-    checkAuth();
+    document.getElementById('profile-name-input').value = profile.name || '';
+    document.getElementById('profile-email-input').value = profile.email || '';
+    document.getElementById('profile-phone-input').value = profile.phone || '';
+    document.getElementById('profile-upi-input').value = profile.upi || '';
+    document.getElementById('profile-password-input').value = profile.password || '';
+
     document.getElementById('profile-menu').hidden = false;
     document.getElementById('profile-toggle').setAttribute('aria-expanded', 'true');
+    editor.hidden = false;
+}
+
+function saveProfileEditor() {
+    const name = document.getElementById('profile-name-input').value.trim();
+    const email = document.getElementById('profile-email-input').value.trim();
+    const phone = document.getElementById('profile-phone-input').value.trim();
+    const upi = document.getElementById('profile-upi-input').value.trim();
+    const password = document.getElementById('profile-password-input').value.trim();
+
+    if (!name || !email || !password) {
+        return alert('Name, email and password are required.');
+    }
+
+    db.user = { name, email, phone, upi, password };
+    saveDB();
+    checkAuth();
+    document.getElementById('profile-editor').hidden = true;
+}
+
+function cancelProfileEditor() {
+    document.getElementById('profile-editor').hidden = true;
 }
 
 function toggleProfileMenu() {
@@ -219,9 +245,34 @@ function escapeChatText(value) {
 function renderChat() {
     const senderSelect = document.getElementById('chat-sender');
     const messages = document.getElementById('chat-messages');
-    senderSelect.innerHTML = db.members.length
-        ? db.members.map(member => `<option value="${escapeChatText(member.name)}">${escapeChatText(member.name)}</option>`).join('')
+    const membersForChat = db.members.length
+        ? [...db.members]
+        : [];
+
+    if (db.user?.name && !membersForChat.some(member => member.name.toLowerCase() === db.user.name.toLowerCase())) {
+        membersForChat.push({ name: db.user.name, email: db.user.email || '', upi: db.user.upi || '', paymentMethod: db.user.upi ? 'UPI' : 'Cash' });
+    }
+
+    senderSelect.innerHTML = membersForChat.length
+        ? membersForChat.map(member => {
+            const senderValue = member.email || member.name;
+            const senderLabel = member.email ? `${member.name} (${member.email})` : member.name;
+            return `<option value="${escapeChatText(senderValue)}">${escapeChatText(senderLabel)}</option>`;
+        }).join('')
         : '<option value="Guest">Guest</option>';
+
+    const defaultSender = db.user?.email || db.user?.name || membersForChat[0]?.email || membersForChat[0]?.name || 'Guest';
+    const currentSelection = [...senderSelect.options].some(option => option.value === defaultSender)
+        ? defaultSender
+        : (senderSelect.options[0]?.value || 'Guest');
+    senderSelect.value = currentSelection;
+
+    if (!db.chatMessages.some(message => message.sender === 'System' && message.text.includes('joined the trip chat'))) {
+        const systemName = db.user?.name || membersForChat[0]?.name || 'A member';
+        db.chatMessages.push({ sender: 'System', text: `${systemName} joined the trip chat.`, time: new Date().toLocaleString() });
+        saveDB();
+    }
+
     messages.innerHTML = db.chatMessages.length
         ? db.chatMessages.map(message => `
             <article class="chat-message">
@@ -274,18 +325,136 @@ function generateTripQr() {
     }
 }
 
-function importTripFromQr() {
-    const tripData = new URLSearchParams(window.location.hash.slice(1)).get('trip');
-    if (!tripData) return;
+function extractTripQrData(rawValue) {
+    if (!rawValue) return null;
+
+    if (rawValue.includes('#trip=')) {
+        const tripData = new URLSearchParams(rawValue.split('#')[1]).get('trip');
+        return tripData || null;
+    }
+
+    if (rawValue.includes('trip=')) {
+        const params = new URLSearchParams(rawValue.split('?')[1] || rawValue);
+        return params.get('trip') || null;
+    }
+
+    return rawValue;
+}
+
+function applyTripImportPayload(tripData) {
+    if (!tripData) return false;
+
+    const payload = extractTripQrData(tripData);
+    if (!payload) return false;
 
     try {
-        const imported = JSON.parse(LZString.decompressFromEncodedURIComponent(tripData));
-        if (!imported.trip || !Array.isArray(imported.members) || !Array.isArray(imported.expenses)) return;
+        let imported;
+        try {
+            imported = JSON.parse(LZString.decompressFromEncodedURIComponent(payload));
+        } catch (error) {
+            imported = JSON.parse(payload);
+        }
+
+        if (!imported.trip || !Array.isArray(imported.members) || !Array.isArray(imported.expenses)) return false;
         pendingTripShare = imported;
         document.getElementById('auth-title').innerHTML = '<i class="fa-solid fa-qrcode"></i> Join Shared Trip';
         document.getElementById('auth-description').innerText = `Enter your details to join ${imported.trip.title || imported.trip.category} and add expenses.`;
+        checkAuth();
+        return true;
     } catch (error) {
         console.warn('Unable to import trip QR data.', error);
+        return false;
+    }
+}
+
+function importTripFromQr() {
+    const tripData = new URLSearchParams(window.location.hash.slice(1)).get('trip');
+    if (!tripData) return;
+    applyTripImportPayload(tripData);
+}
+
+function stopQrScanner() {
+    if (qrScannerFrameId) {
+        cancelAnimationFrame(qrScannerFrameId);
+        qrScannerFrameId = null;
+    }
+    if (qrScannerStream) {
+        qrScannerStream.getTracks().forEach(track => track.stop());
+        qrScannerStream = null;
+    }
+    const video = document.getElementById('qr-scanner-video');
+    if (video) video.srcObject = null;
+}
+
+function closeQrScanner() {
+    const modal = document.getElementById('qr-scanner-modal');
+    stopQrScanner();
+    if (modal) {
+        modal.hidden = true;
+        modal.style.display = 'none';
+    }
+}
+
+function scanQrFrame() {
+    const video = document.getElementById('qr-scanner-video');
+    const canvas = document.getElementById('qr-scanner-canvas');
+    const status = document.getElementById('qr-scanner-status');
+    if (!video || !canvas || !status || !qrScannerStream) return;
+
+    if (video.readyState === video.HAVE_CURRENT_DATA && video.videoWidth && video.videoHeight) {
+        const width = video.videoWidth;
+        const height = video.videoHeight;
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, width, height);
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const code = jsQR(imageData.data, width, height, { inversionAttempts: 'dontInvert' });
+
+        if (code) {
+            const matched = applyTripImportPayload(code.data);
+            if (matched) {
+                status.innerText = 'Trip QR scanned successfully.';
+                setTimeout(closeQrScanner, 700);
+                return;
+            }
+            status.innerText = 'This QR code is not a valid trip invite.';
+        }
+    }
+
+    qrScannerFrameId = requestAnimationFrame(scanQrFrame);
+}
+
+async function openQrScanner() {
+    const modal = document.getElementById('qr-scanner-modal');
+    const status = document.getElementById('qr-scanner-status');
+    const video = document.getElementById('qr-scanner-video');
+
+    if (!modal || !video || typeof jsQR === 'undefined') {
+        return alert('QR scanning is not available in this browser.');
+    }
+
+    modal.hidden = false;
+    modal.style.display = 'flex';
+    status.innerText = 'Requesting camera access...';
+
+    try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('Camera not supported');
+        }
+
+        stopQrScanner();
+        qrScannerStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment' },
+            audio: false
+        });
+        video.srcObject = qrScannerStream;
+        await video.play();
+        status.innerText = 'Point your camera at a shared trip QR code.';
+        qrScannerFrameId = requestAnimationFrame(scanQrFrame);
+    } catch (error) {
+        console.error('Unable to access camera for QR scan.', error);
+        status.innerText = 'Camera access is blocked or unavailable. Please allow camera permission.';
     }
 }
 
@@ -404,6 +573,17 @@ function deleteMember(idx) {
     if (!member) return;
     if (!confirm(`Remove ${member.name} from this trip? Existing expenses will remain unchanged.`)) return;
     db.members.splice(idx, 1);
+    saveDB();
+    renderMembers();
+}
+
+function clearAllMembers() {
+    if (db.members.length === 0) {
+        return alert('There are no members to clear.');
+    }
+    if (!confirm('Clear all current members from this trip? This does not delete the trip or its expenses.')) return;
+
+    db.members = [];
     saveDB();
     renderMembers();
 }
@@ -584,12 +764,53 @@ function closeCamera() {
 }
 
 // SLIDE 4: ANALYTICS CHART & BALANCES
+function addManualAdjustment() {
+    const fromMember = document.getElementById('adjustment-from-member').value;
+    const toMember = document.getElementById('adjustment-to-member').value;
+    const amountInput = document.getElementById('adjustment-amount');
+    const rawAmount = Number.parseFloat(amountInput.value);
+
+    if (!fromMember || !toMember) {
+        return alert('Select both members for the extra adjustment.');
+    }
+
+    if (fromMember === toMember) {
+        return alert('Choose two different members for the extra adjustment.');
+    }
+
+    if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
+        return alert('Enter a valid amount greater than zero.');
+    }
+
+    db.adjustments.push({
+        id: Date.now(),
+        from: fromMember,
+        to: toMember,
+        amount: rawAmount
+    });
+
+    saveDB();
+    amountInput.value = '';
+    renderAnalyticsAndBalances();
+}
+
+function removeManualAdjustment(adjustmentId) {
+    db.adjustments = db.adjustments.filter(adjustment => adjustment.id !== adjustmentId);
+    saveDB();
+    renderAnalyticsAndBalances();
+}
+
 function renderAnalyticsAndBalances() {
     const historyList = document.getElementById('expense-history-list');
     const balanceList = document.getElementById('net-balances-list');
+    const adjustmentList = document.getElementById('extra-adjustments-list');
+    const fromMemberSelect = document.getElementById('adjustment-from-member');
+    const toMemberSelect = document.getElementById('adjustment-to-member');
     historyList.innerHTML = '';
     balanceList.innerHTML = '';
 
+    const activeMembers = db.members.map(member => member.name);
+    const activeMemberSet = new Set(activeMembers);
     let netMap = {};
     let totalPaidMap = {};
     const balanceCurrency = db.expenses[0]?.currency || 'INR';
@@ -601,35 +822,91 @@ function renderAnalyticsAndBalances() {
 
     db.expenses.forEach(e => {
         for (let payer in e.paidByMap) {
+            if (!activeMemberSet.has(payer)) continue;
             netMap[payer] += e.paidByMap[payer];
             totalPaidMap[payer] += e.paidByMap[payer];
         }
 
-        const sharePerPerson = e.totalPaid / e.splitAmong.length;
-        e.splitAmong.forEach(m => {
+        const validSplitAmong = (e.splitAmong || []).filter(name => activeMemberSet.has(name));
+        const sharePerPerson = validSplitAmong.length ? e.totalPaid / validSplitAmong.length : 0;
+        validSplitAmong.forEach(m => {
             netMap[m] -= sharePerPerson;
         });
 
-        const imgTag = e.image ? `<button class="btn btn-secondary" onclick="openImageModal('${e.image}')">🖼️ View Receipt</button>` : '';
+        const imgTag = e.image ? `
+            <div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-top:0.5rem;">
+                <button class="btn btn-secondary" data-image="${e.image}" data-name="${e.desc}" onclick="openImageModal(this.dataset.image)">🖼️ View Receipt</button>
+                <button class="btn btn-primary" data-image="${e.image}" data-name="${e.desc}" onclick="shareReceiptImage(this.dataset.image, this.dataset.name)">📤 Share Receipt</button>
+            </div>
+        ` : '';
         historyList.innerHTML += `
             <div style="padding:0.6rem 0; border-bottom:1px solid var(--border-color)">
                 <strong>${e.desc}</strong> - ${formatMoney(e.totalPaid, e.currency, e.customCurrency)}<br>
-                <small style="color: var(--text-muted)">Shared by: ${e.splitAmong.join(', ')}</small> ${imgTag}
+                <small style="color: var(--text-muted)">Shared by: ${validSplitAmong.join(', ') || 'No active members'}</small>
+                ${imgTag}
             </div>
         `;
     });
 
-    for (let member in netMap) {
-        const bal = netMap[member];
+    (db.adjustments || []).forEach(adjustment => {
+        if (!activeMemberSet.has(adjustment.from) || !activeMemberSet.has(adjustment.to)) return;
+        netMap[adjustment.from] = (netMap[adjustment.from] || 0) - adjustment.amount;
+        netMap[adjustment.to] = (netMap[adjustment.to] || 0) + adjustment.amount;
+    });
+
+    const adjustedNetMap = {};
+    activeMembers.forEach(memberName => {
+        adjustedNetMap[memberName] = netMap[memberName] || 0;
+    });
+
+    if (fromMemberSelect && toMemberSelect) {
+        const currentFrom = fromMemberSelect.value;
+        const currentTo = toMemberSelect.value;
+        fromMemberSelect.innerHTML = activeMembers.map(member => `<option value="${member}">${member}</option>`).join('');
+        toMemberSelect.innerHTML = activeMembers.map(member => `<option value="${member}">${member}</option>`).join('');
+        fromMemberSelect.value = activeMembers.includes(currentFrom) ? currentFrom : (activeMembers[0] || '');
+        toMemberSelect.value = activeMembers.includes(currentTo) ? currentTo : (activeMembers[1] || activeMembers[0] || '');
+    }
+
+    if (adjustmentList) {
+        if ((db.adjustments || []).length === 0) {
+            adjustmentList.innerHTML = '<p class="history-empty">No extra adjustments added yet.</p>';
+        } else {
+            adjustmentList.innerHTML = (db.adjustments || []).map(adjustment => `
+                <div class="adjustment-item" style="display:flex; justify-content:space-between; gap:0.5rem; align-items:center; padding:0.45rem 0; border-bottom:1px solid var(--border-color);">
+                    <div>
+                        <strong>${adjustment.from}</strong> → <strong>${adjustment.to}</strong><br>
+                        <small>${formatMoney(adjustment.amount, balanceCurrency, balanceCustomCurrency)}</small>
+                    </div>
+                    <button class="btn btn-secondary" type="button" onclick="removeManualAdjustment(${adjustment.id})">Remove</button>
+                </div>
+            `).join('');
+        }
+    }
+
+    for (let member in adjustedNetMap) {
+        const bal = adjustedNetMap[member];
+        const contribution = totalPaidMap[member] || 0;
         const color = bal >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
-        const balancePercent = getPercentage(Math.abs(bal), Object.values(netMap).reduce((sum, value) => sum + Math.abs(value), 0));
+        const balancePercent = getPercentage(Math.abs(bal), Object.values(adjustedNetMap).reduce((sum, value) => sum + Math.abs(value), 0));
         const balanceLabel = bal >= 0 ? 'gets back' : 'owes';
-        balanceList.innerHTML += `<li><span><strong>${member}</strong> <small class="balance-percent">${balancePercent}%</small></span> <span style="color:${color}; font-weight:bold;">${balanceLabel} ${formatMoney(Math.abs(bal), balanceCurrency, balanceCustomCurrency)}</span></li>`;
+        balanceList.innerHTML += `
+            <li>
+                <div>
+                    <strong>${member}</strong>
+                    <div style="font-size:0.72rem; color:var(--text-muted); margin-top:0.15rem;">Contribution: ${formatMoney(contribution, balanceCurrency, balanceCustomCurrency)}</div>
+                    <small class="balance-percent">${balancePercent}%</small>
+                </div>
+                <span style="color:${color}; font-weight:bold; text-align:right;">
+                    ${balanceLabel}<br>${formatMoney(Math.abs(bal), balanceCurrency, balanceCustomCurrency)}
+                </span>
+            </li>
+        `;
     }
 
     renderCircularChart('expenseChart', totalPaidMap, 'expense');
-    renderCircularChart('balanceChart', netMap, 'balance');
-    renderSettlementBreakdown(netMap, balanceCurrency, balanceCustomCurrency);
+    renderCircularChart('balanceChart', adjustedNetMap, 'balance');
+    renderSettlementBreakdown(adjustedNetMap, balanceCurrency, balanceCustomCurrency);
 }
 
 function getPercentage(value, total) {
@@ -747,6 +1024,13 @@ function renderReceipts() {
         e.splitAmong.forEach(m => netMap[m] -= share);
     });
 
+    (db.adjustments || []).forEach(adjustment => {
+        if (!netMap[adjustment.from]) netMap[adjustment.from] = 0;
+        if (!netMap[adjustment.to]) netMap[adjustment.to] = 0;
+        netMap[adjustment.from] -= adjustment.amount;
+        netMap[adjustment.to] += adjustment.amount;
+    });
+
     for (let m in netMap) {
         if (netMap[m] < -0.01) debtors.push({ name: m, amount: -netMap[m] });
         else if (netMap[m] > 0.01) creditors.push({ name: m, amount: netMap[m] });
@@ -770,7 +1054,8 @@ function renderReceipts() {
             fromEmail: debtorObj.email || '',
             fromContribution: contributionMap[debtorObj.name] || 0,
             toContribution: contributionMap[creditorObj.name] || 0,
-            amount: minAmt
+            amount: minAmt,
+            kind: 'settlement'
         });
 
         debtors[i].amount -= minAmt;
@@ -778,6 +1063,25 @@ function renderReceipts() {
         if (debtors[i].amount < 0.01) i++;
         if (creditors[j].amount < 0.01) j++;
     }
+
+    (db.adjustments || []).forEach(adjustment => {
+        const fromMember = db.members.find(member => member.name === adjustment.from) || { name: adjustment.from, email: '', upi: '', paymentMethod: 'Cash' };
+        const toMember = db.members.find(member => member.name === adjustment.to) || { name: adjustment.to, email: '', upi: '', paymentMethod: 'Cash' };
+
+        transactions.push({
+            id: `adjustment-${adjustment.id}`,
+            from: adjustment.from,
+            to: adjustment.to,
+            toUpi: toMember.upi,
+            toEmail: toMember.email || '',
+            toPaymentMethod: toMember.paymentMethod || (toMember.upi ? 'UPI' : 'Cash'),
+            fromEmail: fromMember.email || '',
+            fromContribution: contributionMap[adjustment.from] || 0,
+            toContribution: contributionMap[adjustment.to] || 0,
+            amount: adjustment.amount,
+            kind: 'adjustment'
+        });
+    });
 
     if (transactions.length === 0) {
         container.innerHTML = `<p style="color:var(--text-muted)">All balances are even! No settlements required.</p>`;
@@ -789,17 +1093,23 @@ function renderReceipts() {
         const upiLink = `upi://pay?pa=${encodeURIComponent(t.toUpi)}&pn=${encodeURIComponent(t.to)}&am=${t.amount.toFixed(2)}&cu=INR`;
         const formattedAmount = formatMoney(t.amount, receiptCurrency, receiptCustomCurrency);
         const toMember = db.members.find(member => member.name === t.to) || {};
-        const shareMsg = encodeURIComponent(`Hi ${t.from}, here is your bill receipt for ${db.trip.title || 'our event'}:\nYou owe ${formattedAmount} to ${t.to} (${t.toUpi}).`);
+        const extraText = t.kind === 'adjustment'
+            ? `<div class="receipt-amount">Extra amount: <strong>${formattedAmount}</strong> to be paid by <strong>${t.from}</strong> to <strong>${t.to}</strong></div>`
+            : `<div class="receipt-amount">${t.from} owes <strong>${formattedAmount}</strong> and ${t.to} receives it</div>`;
+        const shareMsg = encodeURIComponent(`Hi ${t.from}, here is your bill receipt for ${db.trip.title || 'our event'}:\n${t.kind === 'adjustment' ? `Extra amount due: ${formattedAmount} to ${t.to}.` : `You owe ${formattedAmount} to ${t.to} (${t.toUpi}).`}`);
         const paymentAction = receiptCurrency === 'INR' && t.toPaymentMethod === 'UPI' && t.toUpi
             ? `<a href="${upiLink}" class="btn btn-primary" style="font-size: 0.8rem;" onclick="markAutoSettled('${t.id}')">📲 Pay via UPI</a>`
             : '<span class="currency-note">Pay by cash and mark as done.</span>';
+        const receiptImageAction = db.expenses.find(e => e.id === Number(t.id))?.image
+            ? `<button class="btn btn-secondary" style="font-size: 0.8rem;" onclick="shareReceiptImage('${db.expenses.find(e => e.id === Number(t.id)).image}', '${db.trip.title || 'Receipt'}')">📤 Share Receipt</button>`
+            : '';
 
         container.innerHTML += `
             <div class="receipt-card bill-doodle ${isSettled ? 'settled' : ''}">
                 ${isSettled ? '<div class="app-stamp">SMART SPLITTER<br><span>PAID</span></div>' : ''}
                 <div class="receipt-header">
                     <span class="receipt-icon">🧾</span>
-                    <div><h3>Trip Bill Receipt</h3><small>${db.trip.title || 'Shared Expense'}</small></div>
+                    <div><h3>${t.kind === 'adjustment' ? 'Extra Amount Receipt' : 'Trip Bill Receipt'}</h3><small>${db.trip.title || 'Shared Expense'}</small></div>
                 </div>
                 <div class="receipt-member-row">
                     <div><strong>From: ${t.from}</strong><small>${t.fromEmail || 'Email not added'}</small></div>
@@ -809,13 +1119,14 @@ function renderReceipts() {
                     <div><strong>To: ${t.to}</strong><small>${t.toEmail || 'Email not added'}</small></div>
                     <div class="receipt-contribution">Contribution<br><strong>${formatMoney(t.toContribution, receiptCurrency, receiptCustomCurrency)}</strong></div>
                 </div>
-                <div class="receipt-amount">${t.from} owes <strong>${formattedAmount}</strong> and ${t.to} receives it</div>
+                ${extraText}
                 <div class="payment-detail"><strong>Payment:</strong> ${toMember.paymentMethod === 'Cash' ? 'Cash' : `UPI: ${toMember.upi || 'Not added'}`}</div>
                 <div class="receipt-status">${isSettled ? 'Payment completed' : 'Payment pending'}</div>
                 <div>
                 </div>
                 <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                     ${paymentAction}
+                    ${receiptImageAction}
                     <button class="btn btn-settle ${isSettled ? 'done' : ''}" onclick="toggleSettle('${t.id}')">
                         ${isSettled ? '✔ Settled' : 'Mark Done'}
                     </button>
@@ -839,6 +1150,44 @@ function toggleSettle(transId) {
 }
 
 // IMAGE MODAL
+function dataURLToBlob(dataUrl) {
+    const [header, data] = dataUrl.split(',');
+    const mimeMatch = header.match(/data:(.*?);base64/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    const binary = atob(data);
+    const array = new Uint8Array(binary.length);
+
+    for (let i = 0; i < binary.length; i++) {
+        array[i] = binary.charCodeAt(i);
+    }
+
+    return new Blob([array], { type: mime });
+}
+
+function shareReceiptImage(imageData, title = 'Receipt image') {
+    if (!imageData) {
+        return alert('No receipt image available to share.');
+    }
+
+    const blob = dataURLToBlob(imageData);
+    const file = new File([blob], `${(title || 'receipt').replace(/\s+/g, '-').toLowerCase()}.jpg`, { type: blob.type || 'image/jpeg' });
+
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({
+            title: 'Trip Receipt',
+            text: `Here is the receipt for ${title}.`,
+            files: [file]
+        }).catch(err => {
+            if (err && err.name !== 'AbortError') {
+                openImageModal(imageData);
+            }
+        });
+        return;
+    }
+
+    openImageModal(imageData);
+}
+
 function openImageModal(src) {
     document.getElementById('modal-image').src = src;
     document.getElementById('image-modal').style.display = 'flex';
