@@ -7,7 +7,10 @@ const db = {
     settlements: JSON.parse(localStorage.getItem('app_settlements')) || {},
     adjustments: JSON.parse(localStorage.getItem('app_adjustments')) || [],
     history: JSON.parse(localStorage.getItem('app_history')) || [],
-    chatMessages: JSON.parse(localStorage.getItem('app_chat_messages')) || []
+    chatMessages: JSON.parse(localStorage.getItem('app_chat_messages')) || [],
+    groups: JSON.parse(localStorage.getItem('app_groups')) || [],
+    activeGroupId: localStorage.getItem('app_active_group_id') || '',
+    deletedHistoryKeys: JSON.parse(localStorage.getItem('app_deleted_history_keys')) || []
 };
 
 let expenseChartInstance = null;
@@ -19,6 +22,270 @@ let qrScannerStream = null;
 let qrScannerFrameId = null;
 
 const currencySymbols = { INR: '₹', USD: '$', EUR: '€' };
+const USER_STORE_KEY = 'app_users';
+
+function normalizeUserEmail(email = '') {
+    return String(email || '').trim().toLowerCase();
+}
+
+function getUserStore() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(USER_STORE_KEY) || '{}');
+        return raw && typeof raw === 'object' ? raw : {};
+    } catch {
+        return {};
+    }
+}
+
+function saveUserStore(users) {
+    localStorage.setItem(USER_STORE_KEY, JSON.stringify(users));
+}
+
+function createGroupRecord({ id, title, category = 'Vacation/Trip', customName = '', startDate = '', endDate = '', members = [], expenses = [], settlements = {}, adjustments = [], chatMessages = [] } = {}) {
+    return {
+        id: id || `group-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        title: title || 'New Group',
+        category,
+        customName,
+        startDate,
+        endDate,
+        members,
+        expenses,
+        settlements,
+        adjustments,
+        chatMessages
+    };
+}
+
+function getDefaultGroup() {
+    if (db.groups.length) return db.groups.find(group => group.id === db.activeGroupId) || db.groups[0];
+
+    const defaultGroup = createGroupRecord({
+        title: db.trip.title || db.trip.category || 'Trip Group',
+        category: db.trip.category || 'Vacation/Trip',
+        customName: db.trip.customName || '',
+        startDate: db.trip.startDate || '',
+        endDate: db.trip.endDate || '',
+        members: [...db.members],
+        expenses: [...db.expenses],
+        settlements: { ...db.settlements },
+        adjustments: [...db.adjustments],
+        chatMessages: [...db.chatMessages]
+    });
+    db.groups = [defaultGroup];
+    db.activeGroupId = defaultGroup.id;
+    return defaultGroup;
+}
+
+function syncCurrentGroupState() {
+    const activeGroup = getDefaultGroup();
+    if (!activeGroup) return;
+
+    activeGroup.title = db.trip.title || db.trip.category || activeGroup.title || 'Trip Group';
+    activeGroup.category = db.trip.category || activeGroup.category || 'Vacation/Trip';
+    activeGroup.customName = db.trip.customName || '';
+    activeGroup.startDate = db.trip.startDate || '';
+    activeGroup.endDate = db.trip.endDate || '';
+    activeGroup.members = JSON.parse(JSON.stringify(db.members));
+    activeGroup.expenses = JSON.parse(JSON.stringify(db.expenses));
+    activeGroup.settlements = JSON.parse(JSON.stringify(db.settlements));
+    activeGroup.adjustments = JSON.parse(JSON.stringify(db.adjustments));
+    activeGroup.chatMessages = JSON.parse(JSON.stringify(db.chatMessages));
+    db.groups = db.groups.map(group => group.id === activeGroup.id ? activeGroup : group);
+    db.activeGroupId = activeGroup.id;
+    localStorage.setItem('app_groups', JSON.stringify(db.groups));
+    localStorage.setItem('app_active_group_id', db.activeGroupId);
+}
+
+function loadGroupIntoState(groupId) {
+    const group = db.groups.find(item => item.id === groupId) || getDefaultGroup();
+    if (!group) return;
+
+    db.activeGroupId = group.id;
+    db.trip = {
+        category: group.category || 'Vacation/Trip',
+        customName: group.customName || '',
+        startDate: group.startDate || '',
+        endDate: group.endDate || '',
+        title: group.title || group.category || 'Trip Group'
+    };
+    db.members = JSON.parse(JSON.stringify(group.members || []));
+    db.expenses = JSON.parse(JSON.stringify(group.expenses || []));
+    db.settlements = JSON.parse(JSON.stringify(group.settlements || {}));
+    db.adjustments = JSON.parse(JSON.stringify(group.adjustments || []));
+    db.chatMessages = JSON.parse(JSON.stringify(group.chatMessages || []));
+    saveDB();
+    populateTripSetupFields();
+    updateHeaderTripTitle(db.trip.title);
+}
+
+function populateTripSetupFields() {
+    const categorySelect = document.getElementById('trip-category-select');
+    const customNameInput = document.getElementById('trip-custom-name');
+    const startDateInput = document.getElementById('trip-start-date');
+    const endDateInput = document.getElementById('trip-end-date');
+
+    if (!categorySelect) return;
+    categorySelect.value = db.trip.category || 'Vacation/Trip';
+    customNameInput.value = db.trip.customName || '';
+    startDateInput.value = db.trip.startDate || '';
+    endDateInput.value = db.trip.endDate || '';
+    toggleOtherCategoryInput();
+}
+
+function renderGroupSelector() {
+    const container = document.getElementById('group-selector');
+    if (!container) return;
+
+    if (!db.groups.length) {
+        db.groups = [getDefaultGroup()];
+        db.activeGroupId = db.groups[0].id;
+    }
+
+    container.innerHTML = db.groups.map(group => `
+        <div class="group-tab ${group.id === db.activeGroupId ? 'active' : ''}" data-group-id="${group.id}" onclick="openGroup('${group.id}')">
+            <div class="group-tab__title">${group.title || 'Group'}</div>
+            <small>${group.members?.length || 0} members · ${group.expenses?.length || 0} expenses</small>
+        </div>
+    `).join('');
+}
+
+function selectGroup(groupId) {
+    if (!groupId) return;
+    switchGroup(groupId);
+    renderGroupSelector();
+}
+
+function getGroupActionsMarkup(group) {
+    return `
+        <div class="selected-group-actions">
+            <strong>Group options</strong>
+            <div class="selected-group-actions__buttons">
+            <button type="button" onclick="openGroup('${group.id}')"><i class="fa-solid fa-folder-open"></i> Open</button>
+            <button type="button" onclick="switchGroup('${group.id}'); goToSlide(2);"><i class="fa-solid fa-users"></i> Members</button>
+            <button type="button" onclick="switchGroup('${group.id}'); goToSlide(3);"><i class="fa-solid fa-receipt"></i> Expense</button>
+            <button type="button" onclick="switchGroup('${group.id}'); goToSlide(4);"><i class="fa-solid fa-chart-pie"></i> Balance</button>
+            <button type="button" onclick="switchGroup('${group.id}'); goToSlide(5);"><i class="fa-solid fa-file-invoice-dollar"></i> Receipts</button>
+            <button type="button" onclick="switchGroup('${group.id}'); goToSlide(7);"><i class="fa-solid fa-comments"></i> Chat</button>
+            <button type="button" class="group-delete-button" onclick="deleteGroup('${group.id}')"><i class="fa-solid fa-trash"></i> Delete</button>
+            </div>
+        </div>
+    `;
+}
+
+function switchGroup(groupId) {
+    if (!groupId) return;
+    const targetGroup = db.groups.find(group => group.id === groupId) || getDefaultGroup();
+    if (!targetGroup) return;
+    db.activeGroupId = targetGroup.id;
+    loadGroupIntoState(targetGroup.id);
+    renderGroupSelector();
+    renderMembers();
+    renderChat();
+    renderAnalyticsAndBalances();
+    renderReceipts();
+    renderRecentHistory();
+    window.dispatchEvent(new CustomEvent('splitit-group-changed', { detail: { groupId: targetGroup.id } }));
+}
+
+function openGroup(groupId) {
+    switchGroup(groupId);
+    setGroupDetailVisibility(true);
+    renderGroupDetailActions();
+    goToSlide(8);
+}
+
+function renderGroupDetailActions() {
+    const container = document.getElementById('group-detail-actions');
+    const group = db.groups.find(item => item.id === db.activeGroupId);
+    if (!container || !group) return;
+    container.innerHTML = `
+        <div>
+            <span>Open</span>
+            <strong>${group.title || 'Group'}</strong>
+        </div>
+        <div class="group-detail-actions__buttons">
+            <button type="button" onclick="switchGroup('${group.id}'); goToSlide(2);"><i class="fa-solid fa-users"></i> Members</button>
+            <button type="button" onclick="switchGroup('${group.id}'); goToSlide(3);"><i class="fa-solid fa-receipt"></i> Expense</button>
+            <button type="button" onclick="switchGroup('${group.id}'); goToSlide(4);"><i class="fa-solid fa-chart-pie"></i> Balance</button>
+            <button type="button" onclick="switchGroup('${group.id}'); goToSlide(5);"><i class="fa-solid fa-file-invoice-dollar"></i> Receipts</button>
+            <button type="button" onclick="switchGroup('${group.id}'); goToSlide(7);"><i class="fa-solid fa-comments"></i> Chat</button>
+        </div>
+    `;
+}
+
+function createGroup() {
+    const input = document.getElementById('group-name-input');
+    const name = (input && input.value.trim()) || 'New Group';
+    const group = createGroupRecord({
+        title: name,
+        category: 'Vacation/Trip',
+        members: [],
+        expenses: [],
+        settlements: {},
+        adjustments: [],
+        chatMessages: [{ sender: 'System', text: `${name} created.`, time: new Date().toLocaleString() }]
+    });
+
+    db.groups.push(group);
+    db.activeGroupId = group.id;
+    db.trip = { category: 'Vacation/Trip', customName: '', startDate: '', endDate: '', title: group.title };
+    db.members = [];
+    db.expenses = [];
+    db.settlements = {};
+    db.adjustments = [];
+    db.chatMessages = group.chatMessages;
+    saveDB();
+    window.dispatchEvent(new CustomEvent('splitit-group-changed', { detail: { groupId: group.id } }));
+    renderGroupSelector();
+    if (input) input.value = '';
+    setGroupDetailVisibility(true);
+    populateTripSetupFields();
+    updateHeaderTripTitle(group.title);
+    renderGroupDetailActions();
+    goToSlide(8);
+}
+
+function deleteGroup(groupId) {
+    if (!groupId || db.groups.length <= 1) return alert('At least one group must remain.');
+    const target = db.groups.find(group => group.id === groupId);
+    if (!target) return;
+    if (!confirm(`Delete the group "${target.title}"?`)) return;
+
+    db.groups = db.groups.filter(group => group.id !== groupId);
+    db.activeGroupId = db.groups[0].id;
+    loadGroupIntoState(db.activeGroupId);
+    renderGroupSelector();
+    renderMembers();
+    renderChat();
+    renderAnalyticsAndBalances();
+    renderReceipts();
+}
+
+function getStoredUserByEmail(email) {
+    const users = getUserStore();
+    const emailKey = normalizeUserEmail(email);
+    return users[emailKey] || null;
+}
+
+function saveUserAccount(user) {
+    if (!user || !user.email) return;
+
+    const users = getUserStore();
+    const emailKey = normalizeUserEmail(user.email);
+
+    users[emailKey] = {
+        ...user,
+        email: user.email.trim(),
+        password: String(user.password || '')
+    };
+
+    saveUserStore(users);
+    localStorage.setItem('app_credentials', JSON.stringify({
+        email: emailKey,
+        password: users[emailKey].password
+    }));
+}
 
 function getCurrencyLabel(currency, customCurrency = '') {
     return currencySymbols[currency] || customCurrency.trim().toUpperCase() || '¤';
@@ -31,10 +298,39 @@ function formatMoney(amount, currency = 'INR', customCurrency = '') {
 
 function updateHeaderTripTitle(title) {
     const headerTitle = document.getElementById('header-trip-title');
-    if (headerTitle) headerTitle.innerText = title;
+    if (headerTitle) headerTitle.innerText = title || 'No group selected';
+}
+
+function setGroupDetailVisibility(isVisible) {
+    const detail = document.getElementById('group-detail-content');
+    if (detail) detail.hidden = !isVisible;
+}
+
+function setGroupDetailActionsVisibility(isVisible) {
+    const actions = document.getElementById('group-detail-actions');
+    if (actions) actions.hidden = !isVisible;
+}
+
+function hideSelectedGroupActions() {
+    const actions = document.getElementById('selected-group-actions');
+    if (actions) actions.hidden = true;
 }
 
 function saveDB() {
+    const activeGroup = getDefaultGroup();
+    if (activeGroup) {
+        activeGroup.title = db.trip.title || db.trip.category || activeGroup.title || 'Trip Group';
+        activeGroup.category = db.trip.category || activeGroup.category || 'Vacation/Trip';
+        activeGroup.customName = db.trip.customName || '';
+        activeGroup.startDate = db.trip.startDate || '';
+        activeGroup.endDate = db.trip.endDate || '';
+        activeGroup.members = JSON.parse(JSON.stringify(db.members));
+        activeGroup.expenses = JSON.parse(JSON.stringify(db.expenses));
+        activeGroup.settlements = JSON.parse(JSON.stringify(db.settlements));
+        activeGroup.adjustments = JSON.parse(JSON.stringify(db.adjustments));
+        activeGroup.chatMessages = JSON.parse(JSON.stringify(db.chatMessages));
+    }
+
     localStorage.setItem('app_user', JSON.stringify(db.user));
     localStorage.setItem('app_trip', JSON.stringify(db.trip));
     localStorage.setItem('app_members', JSON.stringify(db.members));
@@ -42,12 +338,13 @@ function saveDB() {
     localStorage.setItem('app_settlements', JSON.stringify(db.settlements));
     localStorage.setItem('app_adjustments', JSON.stringify(db.adjustments));
     localStorage.setItem('app_chat_messages', JSON.stringify(db.chatMessages));
+    localStorage.setItem('app_groups', JSON.stringify(db.groups));
+    localStorage.setItem('app_active_group_id', db.activeGroupId || (db.groups[0] && db.groups[0].id) || '');
+
     if (db.user && db.user.email) {
-        localStorage.setItem('app_credentials', JSON.stringify({
-            email: db.user.email.toLowerCase(),
-            password: db.user.password || ''
-        }));
+        saveUserAccount(db.user);
     }
+
     saveCurrentTripToHistory();
     localStorage.setItem('app_history', JSON.stringify(db.history));
 }
@@ -60,6 +357,7 @@ function saveCurrentTripToHistory() {
     if (!db.trip.title && !db.trip.category) return;
 
     const key = getTripHistoryKey();
+    if (db.deletedHistoryKeys.includes(key)) return;
     const existingIndex = db.history.findIndex(entry => entry.key === key || entry.key === editingHistoryKey);
     const snapshot = {
         key,
@@ -81,7 +379,7 @@ function saveCurrentTripToHistory() {
 }
 
 // AUTH HANDLER
-document.getElementById('auth-form').addEventListener('submit', function(e) {
+document.getElementById('auth-form').addEventListener('submit', async function(e) {
     e.preventDefault();
     const name = document.getElementById('user-name').value.trim();
     const email = document.getElementById('user-email').value.trim();
@@ -89,11 +387,52 @@ document.getElementById('auth-form').addEventListener('submit', function(e) {
     const phone = document.getElementById('user-phone').value.trim();
     const upi = document.getElementById('user-upi').value.trim();
 
-    if (!pendingTripShare) {
-        localStorage.setItem('app_credentials', JSON.stringify({ email: email.toLowerCase(), password }));
+    const emailKey = normalizeUserEmail(email);
+    if (!emailKey) {
+        alert('Please enter a valid email address.');
+        return;
     }
 
-    db.user = { name: name.trim(), email: email.trim(), phone, upi, password: password || '' };
+    let firebaseUser = null;
+    if (window.firebaseAuth) {
+        try {
+            firebaseUser = await window.firebaseAuth.signInWithEmailAndPassword(emailKey, password);
+        } catch (error) {
+            if (error.code !== 'auth/user-not-found' && error.code !== 'auth/invalid-credential') {
+                alert(error.code === 'auth/wrong-password' ? 'Incorrect password for this account.' : 'Unable to sign in. Please try again.');
+                return;
+            }
+            try {
+                firebaseUser = await window.firebaseAuth.createUserWithEmailAndPassword(emailKey, password);
+            } catch (createError) {
+                alert(createError.code === 'auth/email-already-in-use'
+                    ? 'Incorrect password for this account.'
+                    : 'Unable to create your account. Passwords must be at least 6 characters.');
+                return;
+            }
+        }
+    }
+
+    const existingUser = getStoredUserByEmail(emailKey);
+
+    if (existingUser && String(existingUser.password || '') !== String(password)) {
+        alert('Incorrect password for this email. Please enter the correct password.');
+        document.getElementById('user-password').value = '';
+        return;
+    }
+
+    if (existingUser) {
+        db.user = {
+            name: name || existingUser.name || '',
+            email: existingUser.email || email,
+            phone: phone || existingUser.phone || '',
+            upi: upi || existingUser.upi || '',
+            password: existingUser.password || password || '',
+            uid: firebaseUser?.user?.uid || existingUser.uid || ''
+        };
+    } else {
+        db.user = { name: name.trim(), email: email.trim(), phone, upi, password: password || '', uid: firebaseUser?.user?.uid || '' };
+    }
 
     if (pendingTripShare) {
         db.trip = pendingTripShare.trip;
@@ -108,6 +447,9 @@ document.getElementById('auth-form').addEventListener('submit', function(e) {
     }
 
     saveDB();
+    if (typeof window.joinFirebaseGroup === 'function' && db.activeGroupId) {
+        window.joinFirebaseGroup(db.activeGroupId, db.user);
+    }
     checkAuth();
     updateHeaderTripTitle(db.trip.title || db.trip.category);
     document.getElementById('user-password').value = '';
@@ -173,6 +515,7 @@ function toggleProfileMenu() {
 }
 
 function logoutUser() {
+    if (window.firebaseAuth) window.firebaseAuth.signOut().catch(error => console.warn('Unable to sign out of Firebase.', error));
     db.user = null;
     localStorage.removeItem('app_user');
     document.getElementById('profile-menu').hidden = true;
@@ -194,9 +537,12 @@ function goToSlide(slideNum) {
     document.querySelectorAll('.nav-dot').forEach(d => d.classList.remove('active'));
     
     document.getElementById(`slide-${slideNum}`).classList.add('active');
-    document.querySelectorAll('.nav-dot')[slideNum - 1].classList.add('active');
+    const activeNavDot = document.querySelector(`.nav-dot[data-slide="${slideNum}"]`);
+    if (activeNavDot) activeNavDot.classList.add('active');
+    setGroupDetailActionsVisibility(slideNum !== 1 && slideNum !== 6);
+    if (slideNum !== 1 && slideNum !== 6) renderGroupDetailActions();
 
-    if (slideNum === 1) generateTripQr();
+    if (slideNum === 8) generateTripQr();
     if (slideNum === 3) setupExpenseInputs();
     if (slideNum === 4) renderAnalyticsAndBalances();
     if (slideNum === 5) renderReceipts();
@@ -232,10 +578,42 @@ function renderRecentHistory() {
                 <div class="history-actions">
                     <button class="btn btn-secondary" onclick="editHistoryEntry(${index})"><i class="fa-solid fa-pen"></i> Edit</button>
                     <button class="btn btn-primary" onclick="openHistoryEntry(${index})"><i class="fa-solid fa-folder-open"></i> Open</button>
+                    <button class="btn btn-danger" onclick="deleteHistoryEntry(${index})"><i class="fa-solid fa-trash"></i> Delete</button>
                 </div>
             </article>
         `;
     });
+}
+
+function deleteHistoryEntry(index) {
+    const entry = db.history[index];
+    if (!entry) return;
+    if (!confirm(`Delete the history entry "${entry.title}"?`)) return;
+
+    db.history.splice(index, 1);
+    if (entry.key && !db.deletedHistoryKeys.includes(entry.key)) {
+        db.deletedHistoryKeys.push(entry.key);
+    }
+    localStorage.setItem('app_history', JSON.stringify(db.history));
+    localStorage.setItem('app_deleted_history_keys', JSON.stringify(db.deletedHistoryKeys));
+    renderRecentHistory();
+}
+
+function deleteAllHistory() {
+    if (db.history.length === 0) {
+        return alert('There is no history to delete.');
+    }
+    if (!confirm('Delete all saved history entries? This cannot be undone.')) return;
+
+    db.history.forEach(entry => {
+        if (entry.key && !db.deletedHistoryKeys.includes(entry.key)) {
+            db.deletedHistoryKeys.push(entry.key);
+        }
+    });
+    db.history = [];
+    localStorage.setItem('app_history', JSON.stringify(db.history));
+    localStorage.setItem('app_deleted_history_keys', JSON.stringify(db.deletedHistoryKeys));
+    renderRecentHistory();
 }
 
 function escapeChatText(value) {
@@ -253,19 +631,8 @@ function renderChat() {
         membersForChat.push({ name: db.user.name, email: db.user.email || '', upi: db.user.upi || '', paymentMethod: db.user.upi ? 'UPI' : 'Cash' });
     }
 
-    senderSelect.innerHTML = membersForChat.length
-        ? membersForChat.map(member => {
-            const senderValue = member.email || member.name;
-            const senderLabel = member.email ? `${member.name} (${member.email})` : member.name;
-            return `<option value="${escapeChatText(senderValue)}">${escapeChatText(senderLabel)}</option>`;
-        }).join('')
-        : '<option value="Guest">Guest</option>';
-
-    const defaultSender = db.user?.email || db.user?.name || membersForChat[0]?.email || membersForChat[0]?.name || 'Guest';
-    const currentSelection = [...senderSelect.options].some(option => option.value === defaultSender)
-        ? defaultSender
-        : (senderSelect.options[0]?.value || 'Guest');
-    senderSelect.value = currentSelection;
+    const accountName = db.user?.name || db.user?.email || 'Guest';
+    senderSelect.value = db.user?.email ? `${accountName} (${db.user.email})` : accountName;
 
     if (!db.chatMessages.some(message => message.sender === 'System' && message.text.includes('joined the trip chat'))) {
         const systemName = db.user?.name || membersForChat[0]?.name || 'A member';
@@ -284,12 +651,30 @@ function renderChat() {
     messages.scrollTop = messages.scrollHeight;
 }
 
+window.applyRemoteChatMessages = function(messages) {
+    db.chatMessages = messages;
+    localStorage.setItem('app_chat_messages', JSON.stringify(messages));
+    renderChat();
+};
+
+window.addLocalChatMessage = function(text, sender) {
+    db.chatMessages.push({ sender, text, time: new Date().toLocaleString() });
+    saveDB();
+    renderChat();
+};
+
 document.getElementById('chat-form').addEventListener('submit', function(event) {
     event.preventDefault();
     const messageInput = document.getElementById('chat-message');
     const text = messageInput.value.trim();
     if (!text) return;
-    db.chatMessages.push({ sender: document.getElementById('chat-sender').value, text, time: new Date().toLocaleString() });
+    const sender = db.user?.name || db.user?.email || 'Guest';
+    if (typeof window.sendChatMessage === 'function') {
+        window.sendChatMessage(text, sender);
+        messageInput.value = '';
+        return;
+    }
+    db.chatMessages.push({ sender, text, time: new Date().toLocaleString() });
     saveDB();
     messageInput.value = '';
     renderChat();
@@ -297,6 +682,7 @@ document.getElementById('chat-form').addEventListener('submit', function(event) 
 
 function getTripShareData() {
     return {
+        groupId: db.activeGroupId,
         trip: db.trip,
         members: db.members,
         expenses: db.expenses.map(expense => ({ ...expense, image: null })),
@@ -356,6 +742,12 @@ function applyTripImportPayload(tripData) {
         }
 
         if (!imported.trip || !Array.isArray(imported.members) || !Array.isArray(imported.expenses)) return false;
+        if (imported.groupId && db.groups.length) {
+            const localGroup = db.groups.find(group => group.id === db.activeGroupId) || db.groups[0];
+            localGroup.id = imported.groupId;
+            db.activeGroupId = imported.groupId;
+            saveDB();
+        }
         pendingTripShare = imported;
         document.getElementById('auth-title').innerHTML = '<i class="fa-solid fa-qrcode"></i> Join Shared Trip';
         document.getElementById('auth-description').innerText = `Enter your details to join ${imported.trip.title || imported.trip.category} and add expenses.`;
@@ -488,7 +880,8 @@ function editHistoryEntry(index) {
     document.getElementById('trip-end-date').value = entry.endDate || '';
     toggleOtherCategoryInput();
     updateHeaderTripTitle(entry.title);
-    goToSlide(1);
+    setGroupDetailVisibility(true);
+    goToSlide(8);
 }
 
 function toggleOtherCurrencyInput() {
@@ -515,7 +908,8 @@ function saveTripDetails() {
     const startDate = document.getElementById('trip-start-date').value;
     const endDate = document.getElementById('trip-end-date').value;
 
-    const title = (category === 'Other' && customName) ? customName : category;
+    const activeGroup = db.groups.find(group => group.id === db.activeGroupId);
+    const title = activeGroup?.title || ((category === 'Other' && customName) ? customName : category);
     db.trip = { category, customName, startDate, endDate, title };
     saveDB();
     updateHeaderTripTitle(title);
@@ -704,6 +1098,8 @@ function saveExpenseRecord(desc, totalPaid, paidByMap, splitAmong, imageBase64, 
     toggleOtherCurrencyInput();
     updateReceiptStatus('upload-status', '');
     updateReceiptStatus('camera-status', '');
+    document.getElementById('upload-preview-button').hidden = true;
+    document.getElementById('camera-preview-button').hidden = true;
     setupExpenseInputs();
     alert('Expense recorded successfully!');
 }
@@ -737,6 +1133,7 @@ function captureCameraImage() {
         transfer.items.add(file);
         cameraInput.files = transfer.files;
         updateReceiptStatus('camera-status', 'Clicked');
+        document.getElementById('camera-preview-button').hidden = false;
         closeCamera();
     });
 }
@@ -747,11 +1144,28 @@ function updateReceiptStatus(statusId, message) {
 
 function setupReceiptStatusListeners() {
     document.getElementById('expense-image-file').addEventListener('change', function() {
-        if (this.files.length > 0) updateReceiptStatus('upload-status', 'Uploaded');
+        if (this.files.length > 0) {
+            updateReceiptStatus('upload-status', 'Uploaded');
+            document.getElementById('upload-preview-button').hidden = false;
+        }
     });
     document.getElementById('expense-image-camera').addEventListener('change', function() {
-        if (this.files.length > 0) updateReceiptStatus('camera-status', 'Clicked');
+        if (this.files.length > 0) {
+            updateReceiptStatus('camera-status', 'Clicked');
+            document.getElementById('camera-preview-button').hidden = false;
+        }
     });
+}
+
+function previewSelectedReceipt(source) {
+    const inputId = source === 'camera' ? 'expense-image-camera' : 'expense-image-file';
+    const input = document.getElementById(inputId);
+    const file = input?.files?.[0];
+    if (!file) return alert('Please select an image first.');
+
+    const reader = new FileReader();
+    reader.onload = event => openImageModal(event.target.result);
+    reader.readAsDataURL(file);
 }
 
 function closeCamera() {
@@ -801,12 +1215,10 @@ function removeManualAdjustment(adjustmentId) {
 }
 
 function renderAnalyticsAndBalances() {
-    const historyList = document.getElementById('expense-history-list');
     const balanceList = document.getElementById('net-balances-list');
     const adjustmentList = document.getElementById('extra-adjustments-list');
     const fromMemberSelect = document.getElementById('adjustment-from-member');
     const toMemberSelect = document.getElementById('adjustment-to-member');
-    historyList.innerHTML = '';
     balanceList.innerHTML = '';
 
     const activeMembers = db.members.map(member => member.name);
@@ -833,19 +1245,6 @@ function renderAnalyticsAndBalances() {
             netMap[m] -= sharePerPerson;
         });
 
-        const imgTag = e.image ? `
-            <div style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-top:0.5rem;">
-                <button class="btn btn-secondary" data-image="${e.image}" data-name="${e.desc}" onclick="openImageModal(this.dataset.image)">🖼️ View Receipt</button>
-                <button class="btn btn-primary" data-image="${e.image}" data-name="${e.desc}" onclick="shareReceiptImage(this.dataset.image, this.dataset.name)">📤 Share Receipt</button>
-            </div>
-        ` : '';
-        historyList.innerHTML += `
-            <div style="padding:0.6rem 0; border-bottom:1px solid var(--border-color)">
-                <strong>${e.desc}</strong> - ${formatMoney(e.totalPaid, e.currency, e.customCurrency)}<br>
-                <small style="color: var(--text-muted)">Shared by: ${validSplitAmong.join(', ') || 'No active members'}</small>
-                ${imgTag}
-            </div>
-        `;
     });
 
     (db.adjustments || []).forEach(adjustment => {
@@ -1005,6 +1404,30 @@ function renderReceipts() {
     const container = document.getElementById('receipts-container');
     container.innerHTML = '';
 
+    const attachedReceipts = db.expenses.filter(expense => expense.image).map((expense, index) => `
+        <article class="attached-receipt-card">
+            <div>
+                <strong>${expense.desc || `Receipt ${index + 1}`}</strong>
+                <small>Attached receipt image</small>
+            </div>
+            <div class="receipt-image-actions">
+                <button type="button" class="btn btn-secondary" data-image="${expense.image}" onclick="openImageModal(this.dataset.image)">
+                    <i class="fa-solid fa-eye"></i> View Image
+                </button>
+                <button type="button" class="btn btn-primary" data-image="${expense.image}" data-name="${expense.desc || 'Receipt'}" onclick="shareReceiptImage(this.dataset.image, this.dataset.name)">
+                    <i class="fa-solid fa-share-nodes"></i> Share Image
+                </button>
+            </div>
+        </article>
+    `).join('');
+
+    const receiptsHeading = attachedReceipts ? `
+        <div class="attached-receipts-section">
+            <h3><i class="fa-solid fa-images"></i> Attached Receipt Images</h3>
+            <div class="attached-receipts-grid">${attachedReceipts}</div>
+        </div>
+    ` : '';
+
     let debtors = [], creditors = [];
     let netMap = {};
     let contributionMap = {};
@@ -1084,9 +1507,11 @@ function renderReceipts() {
     });
 
     if (transactions.length === 0) {
-        container.innerHTML = `<p style="color:var(--text-muted)">All balances are even! No settlements required.</p>`;
+        container.innerHTML = receiptsHeading + `<p style="color:var(--text-muted)">All balances are even! No settlements required.</p>`;
         return;
     }
+
+    container.innerHTML = receiptsHeading;
 
     transactions.forEach(t => {
         const isSettled = db.settlements[t.id] || false;
@@ -1198,12 +1623,38 @@ function closeImageModal() {
 
 // INIT
 window.onload = function() {
+    if (!db.groups.length) {
+        const defaultGroup = createGroupRecord({
+            title: db.trip.title || db.trip.category || 'Trip Group',
+            category: db.trip.category || 'Vacation/Trip',
+            customName: db.trip.customName || '',
+            startDate: db.trip.startDate || '',
+            endDate: db.trip.endDate || '',
+            members: [...db.members],
+            expenses: [...db.expenses],
+            settlements: { ...db.settlements },
+            adjustments: [...db.adjustments],
+            chatMessages: [...db.chatMessages]
+        });
+        db.groups = [defaultGroup];
+        db.activeGroupId = defaultGroup.id;
+    }
+    if (!db.activeGroupId && db.groups.length) {
+        db.activeGroupId = db.groups[0].id;
+    }
+    if (db.activeGroupId) {
+        loadGroupIntoState(db.activeGroupId);
+    }
     importTripFromQr();
     checkAuth();
     if(db.trip.title) {
         updateHeaderTripTitle(db.trip.title);
     }
+    renderGroupSelector();
     renderMembers();
     setupReceiptStatusListeners();
     saveDB();
+    hideSelectedGroupActions();
+    setGroupDetailActionsVisibility(false);
+    window.dispatchEvent(new CustomEvent('splitit-group-changed', { detail: { groupId: db.activeGroupId } }));
 };

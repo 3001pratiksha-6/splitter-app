@@ -5,12 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Split It</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <!-- Chart.js for Fancy Analytics Chart -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.0.0/dist/jsQR.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
@@ -116,21 +122,39 @@
             </div>
         </header>
 
-        <!-- NAVIGATION TABS -->
-        <div class="slide-nav-bar">
-            <button class="nav-dot active" onclick="goToSlide(1)"><i class="fa-solid fa-house"></i> 1. Start</button>
-            <button class="nav-dot" onclick="goToSlide(2)"><i class="fa-solid fa-users"></i> 2. Members</button>
-            <button class="nav-dot" onclick="goToSlide(3)"><i class="fa-solid fa-receipt"></i> 3. Expenses</button>
-            <button class="nav-dot" onclick="goToSlide(4)"><i class="fa-solid fa-chart-pie"></i> 4. Balances</button>
-            <button class="nav-dot" onclick="goToSlide(5)"><i class="fa-solid fa-file-invoice-dollar"></i> 5. Receipts</button>
-            <button class="nav-dot" onclick="goToSlide(6)"><i class="fa-solid fa-clock-rotate-left"></i> 6. History</button>
-            <button class="nav-dot" onclick="goToSlide(7)"><i class="fa-solid fa-comments"></i> 7. Chat</button>
-        </div>
-
         <main class="slides-viewport">
+            <div class="groups-return-row">
+                <button type="button" class="groups-home-button" onclick="setGroupDetailVisibility(false); hideSelectedGroupActions(); setGroupDetailActionsVisibility(false); goToSlide(1)" title="Back to groups">
+                    <i class="fa-solid fa-layer-group"></i> Groups
+                </button>
+                <button type="button" class="history-button" onclick="setGroupDetailVisibility(false); hideSelectedGroupActions(); setGroupDetailActionsVisibility(false); goToSlide(6)">
+                    <i class="fa-solid fa-clock-rotate-left"></i> View History
+                </button>
+            </div>
+            <div id="group-detail-actions" class="group-detail-actions" hidden></div>
             
             <!-- SLIDE 1: WELCOME & TRIP SETUP -->
             <section class="slide active" id="slide-1">
+                <div class="form-card group-workspace-card">
+                    <div class="section-heading-row">
+                        <div>
+                            <h2><i class="fa-solid fa-layer-group"></i> Create Groups</h2>
+                        </div>
+                    </div>
+                    <div class="group-creator-row">
+                        <div class="input-group">
+                            <label for="group-name-input">New group name</label>
+                            <input type="text" id="group-name-input" placeholder="e.g. Goa Weekend">
+                        </div>
+                        <button type="button" class="btn btn-primary" onclick="createGroup()"><i class="fa-solid fa-plus"></i> Create Group</button>
+                    </div>
+                    <div id="group-selector" class="group-selector" aria-live="polite"></div>
+                </div>
+            </section>
+
+            <!-- GROUP DETAIL SLIDE -->
+            <section class="slide" id="slide-8">
+                <div id="group-detail-content" class="group-detail-content" hidden>
                 <div class="hero-card">
                     <div class="travel-art" aria-hidden="true">
                         <span class="travel-art__emoji travel-art__emoji--sun">☀️</span>
@@ -186,6 +210,7 @@
                     <div id="trip-qr-code" class="trip-qr-code"></div>
                     <p id="trip-qr-status" class="currency-note" aria-live="polite"></p>
                     <button class="btn btn-primary" onclick="generateTripQr()"><i class="fa-solid fa-rotate"></i> Refresh QR</button>
+                </div>
                 </div>
             </section>
 
@@ -422,13 +447,19 @@
 
                     <div class="form-row" style="margin-top: 1rem;">
                         <div class="input-group">
-                            <label>Attach Bill Image (Upload File) (Optional)</label>
-                            <input type="file" id="expense-image-file" accept="image/*">
+                            <label>Upload from file (Optional)</label>
+                            <div class="receipt-file-row">
+                                <input type="file" id="expense-image-file" accept="image/*">
+                                <button type="button" id="upload-preview-button" class="btn receipt-preview-button" onclick="previewSelectedReceipt('file')" hidden><i class="fa-solid fa-eye"></i> View</button>
+                            </div>
                             <span id="upload-status" class="receipt-input-status" aria-live="polite"></span>
                         </div>
                         <div class="input-group">
                             <label>Capture via Camera (Optional)</label>
-                            <input type="file" id="expense-image-camera" accept="image/*" capture="environment">
+                            <div class="receipt-file-row">
+                                <input type="file" id="expense-image-camera" accept="image/*" capture="environment">
+                                <button type="button" id="camera-preview-button" class="btn receipt-preview-button" onclick="previewSelectedReceipt('camera')" hidden><i class="fa-solid fa-eye"></i> View</button>
+                            </div>
                             <span id="camera-status" class="receipt-input-status" aria-live="polite"></span>
                             <button type="button" class="btn btn-secondary camera-button" onclick="openCamera()"><i class="fa-solid fa-camera"></i> Open Camera</button>
                         </div>
@@ -446,23 +477,6 @@
             <section class="slide" id="slide-4">
                 <h2><i class="fa-solid fa-chart-pie"></i> Analytics & Balance Sheet</h2>
                 
-                <div class="analytics-chart-grid">
-                    <div class="list-card">
-                        <h3><i class="fa-solid fa-chart-pie"></i> Shared Expense Contribution</h3>
-                        <div class="chart-wrapper">
-                            <canvas id="expenseChart"></canvas>
-                        </div>
-                    </div>
-
-                    <div class="list-card">
-                        <h3><i class="fa-solid fa-circle-half-stroke"></i> Final Balance Distribution</h3>
-                        <div class="chart-wrapper">
-                            <canvas id="balanceChart"></canvas>
-                        </div>
-                        <div id="settlement-breakdown" class="settlement-breakdown"></div>
-                    </div>
-                </div>
-
                 <div class="grid-2-col">
                     <div class="list-card">
                         <h3><i class="fa-solid fa-scale-balanced"></i> Net Balances</h3>
@@ -494,9 +508,21 @@
                     </div>
                 </div>
 
-                <div class="list-card" style="margin-top: 1rem;">
-                    <h3><i class="fa-solid fa-clock-rotate-left"></i> Expense History Log</h3>
-                    <div id="expense-history-list" class="history-container"></div>
+                <div class="analytics-chart-grid">
+                    <div class="list-card">
+                        <h3><i class="fa-solid fa-chart-pie"></i> Shared Expense Contribution</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="expenseChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="list-card">
+                        <h3><i class="fa-solid fa-circle-half-stroke"></i> Final Balance Distribution</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="balanceChart"></canvas>
+                        </div>
+                        <div id="settlement-breakdown" class="settlement-breakdown"></div>
+                    </div>
                 </div>
 
                 <div class="slide-footer">
@@ -512,7 +538,10 @@
 
             <!-- SLIDE 6: RECENT HISTORY -->
             <section class="slide" id="slide-6">
-                <h2><i class="fa-solid fa-clock-rotate-left"></i> Recent History</h2>
+                <div class="history-heading-row">
+                    <h2><i class="fa-solid fa-clock-rotate-left"></i> Recent History</h2>
+                    <button type="button" class="btn btn-danger" onclick="deleteAllHistory()"><i class="fa-solid fa-trash"></i> Delete All History</button>
+                </div>
                 <p class="history-intro">Your saved trips stay here when you close and reopen the application.</p>
                 <div id="recent-history-list" class="recent-history-list"></div>
             </section>
@@ -527,8 +556,8 @@
                     <form id="chat-form" class="chat-form">
                         <div class="chat-form-row">
                             <div class="input-group">
-                                <label for="chat-sender">Send as</label>
-                                <select id="chat-sender"></select>
+                                <label for="chat-sender">Account</label>
+                                <input type="text" id="chat-sender" readonly>
                             </div>
                             <div class="input-group chat-message-input">
                                 <label for="chat-message">Message</label>
@@ -558,5 +587,6 @@
     </div>
 
     <script src="script.js"></script>
+    <script src="firebase-chat.js"></script>
 </body>
 </html>
